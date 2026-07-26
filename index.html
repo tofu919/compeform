@@ -157,6 +157,7 @@ const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzfPZLYgou-4RGMhB9
 let personRows = [];
 let rowIdSeq = 1;
 let submitTimeoutId = null;
+let lastSubmission = null;
 
 function blankRow(){
   return { id: rowIdSeq++, name:'', kana:'', gender:'', handicap:'', contact:'', memberType:'' };
@@ -232,6 +233,8 @@ function showStatus(type, message){
   el.textContent = message;
 }
 
+let registrationConfirmed = false;
+
 function submitForm(){
   if(!GAS_ENDPOINT){
     alert('GAS_ENDPOINTが設定されていません。index.html内の設定を確認してください。');
@@ -253,6 +256,11 @@ function submitForm(){
     memberType: r.memberType || ''
   }));
 
+  // iframe経由の通知(postMessage)はGoogle側の中間ページでブロックされることがあるため、
+  // 送信後にGET(JSONP)でkintoneを読み直し、実際に反映されたかを確認する方式にする
+  lastSubmission = { company: company, names: validRows.map(r => r.name.trim()) };
+  registrationConfirmed = false;
+
   const form = document.getElementById('regForm');
   form.action = GAS_ENDPOINT;
   document.getElementById('payloadField').value = JSON.stringify(payload);
@@ -264,22 +272,82 @@ function submitForm(){
 
   clearTimeout(submitTimeoutId);
   submitTimeoutId = setTimeout(()=>{
-    document.getElementById('submitBtn').disabled = false;
-    showStatus('error', '応答の確認ができませんでした。時間をおいて再度お試しいただくか、kintone側で登録状況をご確認ください。');
-  }, 15000);
+    if(!registrationConfirmed) verifyRegistration(lastSubmission, 1);
+  }, 2500);
 }
 
+function verifyRegistration(submission, attempt){
+  if(registrationConfirmed || !submission) return;
+
+  const callbackName = 'verifyCallback_' + Date.now() + '_' + attempt;
+  let scriptEl = document.createElement('script');
+
+  function cleanup(){
+    delete window[callbackName];
+    if(scriptEl && scriptEl.parentNode) scriptEl.parentNode.removeChild(scriptEl);
+  }
+
+  function retryOrGiveUp(){
+    if(attempt < 4){
+      setTimeout(()=>verifyRegistration(submission, attempt + 1), 2500);
+    } else {
+      document.getElementById('submitBtn').disabled = false;
+      showStatus('sending', '送信処理は完了しています。反映まで少し時間がかかる場合がありますので、少し経ってからkintone側をご確認ください。');
+    }
+  }
+
+  window[callbackName] = function(data){
+    cleanup();
+    if(registrationConfirmed) return;
+    const ok = data && !data.error && Array.isArray(data.participants) &&
+      submission.names.every(name => data.participants.some(p => p.name === name && p.company === submission.company));
+    if(ok){
+      registrationConfirmed = true;
+      document.getElementById('submitBtn').disabled = false;
+      showCompleteView(submission, submission.names.length);
+    } else {
+      retryOrGiveUp();
+    }
+  };
+
+  scriptEl.onerror = function(){ cleanup(); retryOrGiveUp(); };
+  scriptEl.src = GAS_ENDPOINT + (GAS_ENDPOINT.includes('?') ? '&' : '?') + 'callback=' + callbackName;
+  document.body.appendChild(scriptEl);
+}
+
+function showCompleteView(submission, count){
+  const summaryEl = document.getElementById('completeSummary');
+  const namesHtml = submission.names.map(n => `<li>${n}</li>`).join('');
+  summaryEl.innerHTML = `
+    <div class="cs-company">${submission.company}</div>
+    <ul>${namesHtml}</ul>
+  `;
+  document.getElementById('formView').style.display = 'none';
+  document.getElementById('completeView').style.display = 'block';
+  window.scrollTo(0, 0);
+}
+
+function backToForm(){
+  document.getElementById('companyName').value = '';
+  personRows = [blankRow()];
+  renderPersonList();
+  document.getElementById('statusMsg').className = 'status-msg';
+  document.getElementById('submitBtn').disabled = false;
+  document.getElementById('completeView').style.display = 'none';
+  document.getElementById('formView').style.display = 'block';
+}
+
+// 環境によってはpostMessageが届く場合もあるため、届いたら優先的に使う(二重表示は防止する)
 window.addEventListener('message', function(e){
   const data = e.data;
   if(!data || data.source !== 'kintone-touroku') return;
+  if(registrationConfirmed) return;
+  registrationConfirmed = true;
   clearTimeout(submitTimeoutId);
   document.getElementById('submitBtn').disabled = false;
 
   if(data.status === 'ok'){
-    showStatus('ok', `${data.count}件登録しました。ご協力ありがとうございました。`);
-    document.getElementById('companyName').value = '';
-    personRows = [blankRow()];
-    renderPersonList();
+    showCompleteView(lastSubmission, data.count);
   } else {
     showStatus('error', data.message || '登録に失敗しました');
   }
