@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>参加者登録フォーム | ゴルフコンペ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green-deep:#1B4332;
+    --green-fairway:#40916C;
+    --green-mist:#D8F3DC;
+    --cream:#FBF8F1;
+    --ink:#1D2A1F;
+    --white:#FFFFFF;
+    --flag:#C1462F;
+    --line:#CFE3D6;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--cream);color:var(--ink);
+    font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;
+  }
+  .app{max-width:640px;margin:0 auto;padding:28px 20px 60px;}
+
+  .header{border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:22px;}
+  .header h1{
+    font-family:'Inter',sans-serif;font-weight:800;font-size:clamp(20px,3vw,26px);
+    color:var(--green-deep);margin:0 0 4px;letter-spacing:-0.01em;
+  }
+  .header p{margin:0;color:#6b7c70;font-size:13px;}
+
+  .panel{
+    background:var(--white);border:1px solid var(--line);border-radius:12px;
+    padding:16px;margin-bottom:16px;
+  }
+  .panel h2{
+    font-size:13.5px;font-weight:700;margin:0 0 10px;color:var(--green-deep);
+  }
+  .field{display:flex;flex-direction:column;gap:5px;}
+  .field label{font-size:11.5px;font-weight:700;color:#5c6f62;}
+  .field input, .field select{
+    width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;
+    font-family:'Inter',sans-serif;font-size:14px;background:var(--cream);color:var(--ink);
+  }
+  .field input:focus, .field select:focus{outline:2px solid var(--green-fairway);outline-offset:1px;}
+
+  .person-card{
+    border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px;
+    background:var(--cream);position:relative;
+  }
+  .person-card-head{
+    display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;
+  }
+  .person-card-head span{font-size:12px;font-weight:800;color:var(--green-deep);}
+  .person-remove{
+    background:none;border:none;color:#a9b8ae;cursor:pointer;font-size:13px;font-weight:600;
+    padding:2px 6px;
+  }
+  .person-remove:hover{color:var(--flag);}
+  .person-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .person-grid .field.full{grid-column:1/-1;}
+
+  .add-row-btn{
+    width:100%;background:var(--white);border:1px dashed var(--green-fairway);color:var(--green-deep);
+    padding:10px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;
+  }
+  .add-row-btn:hover{background:var(--green-mist);}
+
+  .submit-btn{
+    width:100%;background:var(--green-deep);color:var(--white);border:none;
+    padding:14px;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:6px;
+  }
+  .submit-btn:hover{background:var(--green-fairway);}
+  .submit-btn:disabled{background:#a9b8ae;cursor:not-allowed;}
+
+  .status-msg{
+    margin-top:14px;padding:12px 14px;border-radius:10px;font-size:13px;font-weight:600;
+    display:none;
+  }
+  .status-msg.show{display:block;}
+  .status-msg.ok{background:var(--green-mist);color:var(--green-deep);border:1px solid var(--green-fairway);}
+  .status-msg.error{background:#F7E1DA;color:var(--flag);border:1px solid var(--flag);}
+  .status-msg.sending{background:var(--white);color:#5c6f62;border:1px solid var(--line);}
+
+  @media (max-width:480px){
+    .app{padding:20px 14px 48px;}
+    .person-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="header">
+    <h1>⛳ 参加者登録フォーム</h1>
+    <p>入力いただいた内容は、そのままkintoneの参加者マスタに登録されます</p>
+  </div>
+
+  <div class="panel">
+    <h2>会社・団体名</h2>
+    <div class="field">
+      <input id="companyName" placeholder="例：サイボウズ株式会社">
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>参加者情報（1名の場合はそのまま、複数名まとめて登録する場合は「＋ もう一人追加」）</h2>
+    <div id="personList"></div>
+    <button type="button" class="add-row-btn" onclick="addPersonRow()">＋ もう一人追加</button>
+  </div>
+
+  <button id="submitBtn" type="button" class="submit-btn" onclick="submitForm()">登録する</button>
+  <div id="statusMsg" class="status-msg"></div>
+
+  <iframe name="hiddenFrame" style="display:none"></iframe>
+  <form id="regForm" action="" method="POST" target="hiddenFrame" style="display:none">
+    <input type="hidden" name="payload" id="payloadField">
+  </form>
+
+</div>
+
+<script>
+// ここにGASのデプロイURL(.../exec)を設定してください（組み合わせメーカーと同じURLでOK）
+const GAS_ENDPOINT = '';
+
+let personRows = [];
+let rowIdSeq = 1;
+let submitTimeoutId = null;
+
+function blankRow(){
+  return { id: rowIdSeq++, name:'', kana:'', gender:'', handicap:'', contact:'', memberType:'' };
+}
+
+function addPersonRow(){
+  personRows.push(blankRow());
+  renderPersonList();
+}
+
+function removePersonRow(id){
+  if(personRows.length <= 1) return;
+  personRows = personRows.filter(r => r.id !== id);
+  renderPersonList();
+}
+
+function updateRow(id, field, value){
+  const row = personRows.find(r => r.id === id);
+  if(row) row[field] = value;
+}
+
+function renderPersonList(){
+  const list = document.getElementById('personList');
+  list.innerHTML = personRows.map((r, idx) => `
+    <div class="person-card">
+      <div class="person-card-head">
+        <span>参加者 ${idx + 1}</span>
+        ${personRows.length > 1 ? `<button type="button" class="person-remove" onclick="removePersonRow(${r.id})">削除</button>` : ''}
+      </div>
+      <div class="person-grid">
+        <div class="field full">
+          <label>氏名 *</label>
+          <input value="${r.name}" placeholder="例：田中 健一" oninput="updateRow(${r.id},'name',this.value)">
+        </div>
+        <div class="field">
+          <label>フリガナ</label>
+          <input value="${r.kana}" placeholder="例：タナカ ケンイチ" oninput="updateRow(${r.id},'kana',this.value)">
+        </div>
+        <div class="field">
+          <label>性別</label>
+          <select onchange="updateRow(${r.id},'gender',this.value)">
+            <option value="" ${r.gender===''?'selected':''}>選択しない</option>
+            <option value="男性" ${r.gender==='男性'?'selected':''}>男性</option>
+            <option value="女性" ${r.gender==='女性'?'selected':''}>女性</option>
+            <option value="回答しない" ${r.gender==='回答しない'?'selected':''}>回答しない</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>平均スコア</label>
+          <input type="number" step="1" value="${r.handicap}" placeholder="例：95" oninput="updateRow(${r.id},'handicap',this.value)">
+        </div>
+        <div class="field">
+          <label>会員区分</label>
+          <select onchange="updateRow(${r.id},'memberType',this.value)">
+            <option value="" ${r.memberType===''?'selected':''}>選択しない</option>
+            <option value="正会員" ${r.memberType==='正会員'?'selected':''}>正会員</option>
+            <option value="ゲスト" ${r.memberType==='ゲスト'?'selected':''}>ゲスト</option>
+            <option value="ビジター" ${r.memberType==='ビジター'?'selected':''}>ビジター</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label>連絡先（電話番号・メール）</label>
+          <input value="${r.contact}" placeholder="例：090-1234-5678" oninput="updateRow(${r.id},'contact',this.value)">
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showStatus(type, message){
+  const el = document.getElementById('statusMsg');
+  el.className = 'status-msg show ' + type;
+  el.textContent = message;
+}
+
+function submitForm(){
+  if(!GAS_ENDPOINT){
+    alert('GAS_ENDPOINTが設定されていません。index.html内の設定を確認してください。');
+    return;
+  }
+  const company = document.getElementById('companyName').value.trim();
+  if(!company){ alert('会社・団体名を入力してください'); return; }
+
+  const validRows = personRows.filter(r => (r.name || '').trim() !== '');
+  if(validRows.length === 0){ alert('少なくとも1名分の氏名を入力してください'); return; }
+
+  const payload = validRows.map(r => ({
+    company: company,
+    name: r.name.trim(),
+    kana: (r.kana || '').trim(),
+    gender: r.gender || '',
+    handicap: (r.handicap !== '' && r.handicap != null) ? r.handicap : '',
+    contact: (r.contact || '').trim(),
+    memberType: r.memberType || ''
+  }));
+
+  const form = document.getElementById('regForm');
+  form.action = GAS_ENDPOINT;
+  document.getElementById('payloadField').value = JSON.stringify(payload);
+
+  document.getElementById('submitBtn').disabled = true;
+  showStatus('sending', `送信中...(${payload.length}名)`);
+
+  form.submit();
+
+  clearTimeout(submitTimeoutId);
+  submitTimeoutId = setTimeout(()=>{
+    document.getElementById('submitBtn').disabled = false;
+    showStatus('error', '応答の確認ができませんでした。時間をおいて再度お試しいただくか、kintone側で登録状況をご確認ください。');
+  }, 15000);
+}
+
+window.addEventListener('message', function(e){
+  const data = e.data;
+  if(!data || data.source !== 'kintone-touroku') return;
+  clearTimeout(submitTimeoutId);
+  document.getElementById('submitBtn').disabled = false;
+
+  if(data.status === 'ok'){
+    showStatus('ok', `${data.count}件登録しました。ご協力ありがとうございました。`);
+    document.getElementById('companyName').value = '';
+    personRows = [blankRow()];
+    renderPersonList();
+  } else {
+    showStatus('error', data.message || '登録に失敗しました');
+  }
+});
+
+personRows = [blankRow()];
+renderPersonList();
+</script>
+</body>
+</html>
